@@ -81,6 +81,8 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [resolvingSelected, setResolvingSelected] = useState(false);
   const hasEventsRef = useRef(false);
 
   useEffect(() => {
@@ -118,6 +120,8 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
         if (!mounted) return;
         hasEventsRef.current = mapped.length > 0;
         setEvents(mapped);
+        const activeIds = new Set(mapped.map((event) => event.id));
+        setSelectedIds((current) => current.filter((id) => activeIds.has(id)));
         setError(null);
       } catch (err: unknown) {
         if (!mounted) return;
@@ -151,11 +155,66 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
 
       // Quitamos la alarma de la lista local
       setEvents((prev) => prev.filter((e) => e.id !== id));
+      setSelectedIds((prev) => prev.filter((selectedId) => selectedId !== id));
     } catch (err: any) {
       console.error(err);
       setError(err.message ?? "Error al marcar como resuelta");
     } finally {
       setResolvingId(null);
+    }
+  };
+
+  const toggleEventSelection = (id: number) => {
+    setSelectedIds((current) =>
+      current.includes(id)
+        ? current.filter((selectedId) => selectedId !== id)
+        : [...current, id]
+    );
+  };
+
+  const allEventsSelected =
+    events.length > 0 && events.every((event) => selectedIds.includes(event.id));
+
+  const toggleAllEvents = () => {
+    setSelectedIds(allEventsSelected ? [] : events.map((event) => event.id));
+  };
+
+  const handleResolveSelected = async () => {
+    const idsToResolve = events
+      .filter((event) => selectedIds.includes(event.id))
+      .map((event) => event.id);
+    if (idsToResolve.length === 0) return;
+
+    setResolvingSelected(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(
+        idsToResolve.map(async (id) => {
+          const res = await fetch(
+            `${API_BASE_URL}/api/eventos-alarma/${id}/resolver`,
+            { method: "PATCH" }
+          );
+          if (!res.ok) throw new Error(`No se pudo resolver la alarma ${id}`);
+          return id;
+        })
+      );
+
+      const resolvedIds = results
+        .filter((result): result is PromiseFulfilledResult<number> => result.status === "fulfilled")
+        .map((result) => result.value);
+      const resolvedSet = new Set(resolvedIds);
+      const failedCount = results.length - resolvedIds.length;
+
+      setEvents((current) => current.filter((event) => !resolvedSet.has(event.id)));
+      setSelectedIds((current) => current.filter((id) => !resolvedSet.has(id)));
+      if (failedCount > 0) {
+        setError(`Se resolvieron ${resolvedIds.length}; ${failedCount} no se pudieron resolver. Intenta de nuevo.`);
+      }
+    } catch (err: unknown) {
+      console.error("Error resolviendo alarmas seleccionadas:", err);
+      setError("No se pudieron resolver las alarmas seleccionadas. Intenta de nuevo.");
+    } finally {
+      setResolvingSelected(false);
     }
   };
 
@@ -189,53 +248,101 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
           No hay alarmas activas 🎉
         </p>
       ) : (
-        <div className={listClass}>
-          {events.map((ev) => {
-            const { label, badgeClass, cardClass } = getSeverityStyles(
-              ev.severity
-            );
-            const variableLabel = getVariableLabel(ev.variable);
+        <>
+          {!compact && (
+            <div className="mt-3 flex flex-col gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="inline-flex min-h-10 items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={allEventsSelected}
+                  onChange={toggleAllEvents}
+                  disabled={resolvingSelected || resolvingId !== null}
+                  aria-label="Seleccionar todas las alarmas activas"
+                  className="h-4 w-4 shrink-0 accent-[#0982A0]"
+                />
+                <span>Seleccionar todas</span>
+              </label>
 
-            return (
-              <div
-                key={ev.id}
-                className={`rounded-lg px-4 py-3 shadow-sm ${cardClass}`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-sm">{variableLabel}</p>
-                    <p className="text-xs text-gray-600">
-                      {ev.deviceLabel} — Valor:{" "}
-                      <span className="font-semibold">
-                        {ev.value.toFixed(2)}
-                      </span>
-                    </p>
-                    <p className="text-[11px] text-gray-500 mt-1">
-                      Disparada: {formatDateTime(ev.firedAt)}
-                    </p>
+              {selectedIds.length > 0 && (
+                <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                  <span className="text-xs text-gray-600" aria-live="polite">
+                    {selectedIds.length} seleccionadas
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleResolveSelected}
+                    disabled={resolvingSelected || resolvingId !== null}
+                    className="min-h-10 w-full rounded-lg bg-[#0982A0] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#076b83] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                  >
+                    {resolvingSelected
+                      ? "Resolviendo..."
+                      : `Marcar seleccionadas como resueltas (${selectedIds.length})`}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={listClass}>
+            {events.map((ev) => {
+              const { label, badgeClass, cardClass } = getSeverityStyles(
+                ev.severity
+              );
+              const variableLabel = getVariableLabel(ev.variable);
+
+              return (
+                <div
+                  key={ev.id}
+                  className={`rounded-lg px-4 py-3 shadow-sm ${cardClass}`}
+                >
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      {!compact && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(ev.id)}
+                          onChange={() => toggleEventSelection(ev.id)}
+                          disabled={resolvingSelected || resolvingId !== null}
+                          aria-label={`Seleccionar alarma de ${variableLabel} del ${ev.deviceLabel}`}
+                          className="mt-1 h-4 w-4 shrink-0 accent-[#0982A0]"
+                        />
+                      )}
+                      <div className="min-w-0 break-words">
+                        <p className="font-semibold text-sm">{variableLabel}</p>
+                        <p className="text-xs text-gray-600">
+                          {ev.deviceLabel} — Valor:{" "}
+                          <span className="font-semibold">
+                            {ev.value.toFixed(2)}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-[11px] text-gray-500">
+                          Disparada: {formatDateTime(ev.firedAt)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <span
+                      className={`self-start text-[11px] font-semibold uppercase ${badgeClass}`}
+                    >
+                      {label}
+                    </span>
                   </div>
 
-                  <span
-                    className={`text-[11px] font-semibold uppercase ${badgeClass}`}
+                  <button
+                    type="button"
+                    onClick={() => handleResolve(ev.id)}
+                    disabled={resolvingId === ev.id || resolvingSelected}
+                    className="mt-2 min-h-10 w-full rounded-md px-2 text-left text-xs text-[#0982A0] hover:bg-white/60 hover:underline disabled:opacity-60 sm:min-h-8 sm:w-auto"
                   >
-                    {label}
-                  </span>
+                    {resolvingId === ev.id
+                      ? "Marcando..."
+                      : "Marcar como resuelta"}
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => handleResolve(ev.id)}
-                  disabled={resolvingId === ev.id}
-                  className="mt-2 text-[11px] text-[#0982A0] hover:underline disabled:opacity-60"
-                >
-                  {resolvingId === ev.id
-                    ? "Marcando..."
-                    : "Marcar como resuelta"}
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </div>
   );
