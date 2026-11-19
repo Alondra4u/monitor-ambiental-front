@@ -27,9 +27,9 @@ export default function RealTimeValues({ registros }: RealTimeValuesProps) {
 
   return (
     <div className="bg-white rounded-xl p-5 shadow-md">
-      <h2 className="text-lg font-semibold mb-3">Valores en tiempo real</h2>
+      <h2 className="mb-3 text-lg font-semibold">Últimos valores registrados</h2>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
         {/* Estación Rural */}
         <div className="border p-3 rounded-md">
           <h3 className="font-medium mb-1">Estación Rural</h3>

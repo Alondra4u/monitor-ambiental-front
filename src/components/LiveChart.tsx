@@ -13,11 +13,13 @@ CartesianGrid,
 
 type LiveChartProps = {
 registros: Registro[];
+  dailyAverages?: Pick<Registro, "fecha" | "estacion" | "co2">[];
 };
 
-const LiveChart: React.FC<LiveChartProps> = ({ registros }) => {
+const LiveChart: React.FC<LiveChartProps> = ({ registros, dailyAverages = [] }) => {
 const chartData = useMemo(() => {
-if (!registros?.length) return [];
+const source = dailyAverages.length ? dailyAverages : registros;
+if (!source?.length) return [];
 
 type Acumulado = {
   fecha: string;
@@ -29,7 +31,7 @@ type Acumulado = {
 
 const mapa = new Map<string, Acumulado>();
 
-registros.forEach((r) => {
+source.forEach((r) => {
   if (!r.fecha) return;
 
   const fecha = r.fecha.split("T")[0];
@@ -75,7 +77,7 @@ return Array.from(mapa.values())
   }));
 
 
-}, [registros]);
+}, [registros, dailyAverages]);
 
 return ( <div className="bg-white rounded-xl p-5 shadow-md h-72"> <h2 className="text-lg font-semibold mb-3">
 Promedio diario de CO₂ </h2>

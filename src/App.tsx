@@ -23,21 +23,24 @@ export type Registro = {
   humedad?: number;
 };
 
+type PromedioDiario = Pick<Registro, "fecha" | "estacion" | "co2">;
+
 type DashboardPageProps = {
   registros: Registro[];
+  promedios: PromedioDiario[];
 };
 
-function DashboardPage({ registros }: DashboardPageProps) {
+function DashboardPage({ registros, promedios }: DashboardPageProps) {
     
   return (
-    <div className="max-w-7xl mx-auto px-6 pt-10 pb-6 flex flex-col gap-4">
+    <div className="mx-auto flex max-w-7xl flex-col gap-4 px-3 pb-6 pt-5 sm:px-6 sm:pt-10">
       {/* Fila 1: valores + gráfica */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1">
           <RealTimeValues registros={registros} />
         </div>
         <div className="lg:col-span-2">
-          <LiveChart registros={registros} />
+          <LiveChart registros={registros} dailyAverages={promedios} />
         </div>
       </div>
 
@@ -57,7 +60,7 @@ function DashboardPage({ registros }: DashboardPageProps) {
 
 function ComparativaPage() {
   return (
-    <div className="max-w-7xl mx-auto px-6 pt-5 pb-6">
+    <div className="mx-auto max-w-7xl px-3 pb-6 pt-5 sm:px-6">
       <Comparativa />
     </div>
   );
@@ -65,14 +68,14 @@ function ComparativaPage() {
 
 function HistorialPage() {
   return (
-    <div className="max-w-7xl mx-auto px-6 py-6">
+    <div className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-6">
       <HistoryTable />
     </div>
   );
 }
 function AlarmasPage() {
   return (
-    <div className="max-w-7xl mx-auto px-6 py-6">
+    <div className="mx-auto max-w-7xl px-3 py-5 sm:px-6 sm:py-6">
       {/* 👇 Aquí sí dejamos la configuración completa */}
       <AlarmsPanel showButton={true} />
     </div>
@@ -81,20 +84,25 @@ function AlarmasPage() {
 
 function App() {
   const [registros, setRegistros] = useState<Registro[]>([]);
+  const [promedios, setPromedios] = useState<PromedioDiario[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let requestInProgress = false;
+
     const fetchMediciones = async () => {
+      if (requestInProgress) return;
+      requestInProgress = true;
       try {
-        // The dashboard refreshes only recent readings; the history page loads the full archive separately.
-        const res = await fetch(`${API_BASE_URL}/api/mediciones/ultimahora`);
+        const res = await fetch(`${API_BASE_URL}/api/mediciones/dashboard`);
 
         if (!res.ok) {
           throw new Error("Error HTTP " + res.status);
         }
 
-        const data = await res.json();
+        const payload = await res.json();
+        const data: any[] = Array.isArray(payload) ? payload : payload.registros;
 
         const normalizados: Registro[] = data.map((item: any) => ({
           fecha: item.fecha,
@@ -116,6 +124,20 @@ function App() {
         }));
 
         setRegistros(normalizados);
+        setPromedios(
+          Array.isArray(payload.promedios)
+            ? payload.promedios.map((item: any) => ({
+                fecha: item.fecha,
+                estacion:
+                  item.estacion === "RURAL"
+                    ? "Rural"
+                    : item.estacion === "URBANA"
+                      ? "Urbana"
+                      : item.estacion ?? "N/A",
+                co2: Number(item.co2),
+              }))
+            : []
+        );
         setError(null);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Error cargando datos";
@@ -123,29 +145,28 @@ function App() {
         setError(message);
       } finally {
         setLoading(false);
+        requestInProgress = false;
       }
     };
 
     fetchMediciones();
-    const intervalo = setInterval(fetchMediciones, 5000);
+    const intervalo = setInterval(fetchMediciones, 30000);
 
     return () => clearInterval(intervalo);
   }, []);
-
-  if (loading) {
-    return (
-      <div className="bg-gray-100 min-h-screen flex items-center justify-center">
-        Cargando mediciones...
-      </div>
-    );
-  }
 
   return (
     <div className="bg-gray-100 min-h-screen">
       <Navbar />
 
+      {loading && (
+        <p role="status" className="mx-auto mt-3 max-w-7xl px-3 text-sm text-gray-600 sm:px-6">
+          Conectando con la API y cargando las últimas mediciones…
+        </p>
+      )}
+
       {error && (
-        <div role="alert" className="mx-auto mt-4 max-w-7xl px-6">
+        <div role="alert" className="mx-auto mt-4 max-w-7xl px-3 sm:px-6">
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             No se pudieron actualizar las mediciones. {registros.length > 0
               ? "Se muestran los últimos datos disponibles."
@@ -155,18 +176,18 @@ function App() {
       )}
 
       <Routes>
-        <Route path="/" element={<DashboardPage registros={registros} />} />
+        <Route path="/" element={<DashboardPage registros={registros} promedios={promedios} />} />
        <Route
   path="/historial"
   element={<HistorialPage />}
 />
         <Route path="/comparativa" element={<ComparativaPage />} />
         <Route path="/alarmas" element={<AlarmasPage />} />
-        <Route path="*" element={<div className="mx-auto max-w-7xl px-6 py-12 text-center text-gray-600">Página no encontrada.</div>} />
+        <Route path="*" element={<div className="mx-auto max-w-7xl px-3 py-12 text-center text-gray-600 sm:px-6">Página no encontrada.</div>} />
       </Routes>
 
       <div className="text-xs text-gray-500 text-center pb-2">
-        Registros cargados desde la API: {registros.length}
+        Registros recientes cargados desde la API: {registros.length}
       </div>
     </div>
   );
