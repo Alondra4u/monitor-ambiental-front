@@ -16,6 +16,7 @@ interface ActiveAlarmsWidgetProps {
 }
 
 const EVENTS_URL = `${API_BASE_URL}/api/eventos-alarma/activos`;
+const PAGE_SIZE = 50;
 
 const formatDateTime = (value: string) => {
   if (!value) return "-";
@@ -83,7 +84,10 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
   const [resolvingId, setResolvingId] = useState<number | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [resolvingSelected, setResolvingSelected] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const hasEventsRef = useRef(false);
+  const loadedInitialPageRef = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -94,11 +98,12 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
       requestInProgress = true;
       if (!hasEventsRef.current) setLoading(true);
       try {
-        const res = await fetch(EVENTS_URL);
+        const res = await fetch(`${EVENTS_URL}?limit=${PAGE_SIZE}&offset=0`);
         if (!res.ok) {
           throw new Error("Error al cargar eventos de alarma");
         }
-        const data = await res.json();
+        const page = await res.json();
+        const data = Array.isArray(page) ? page : page.items;
 
         const mapped: AlarmEvent[] = data.map((e: any) => ({
           id:
@@ -119,9 +124,17 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
 
         if (!mounted) return;
         hasEventsRef.current = mapped.length > 0;
-        setEvents(mapped);
-        const activeIds = new Set(mapped.map((event) => event.id));
-        setSelectedIds((current) => current.filter((id) => activeIds.has(id)));
+        setEvents((current) => {
+          const firstPageIds = new Set(mapped.map((event) => event.id));
+          const previouslyLoadedBeyondFirstPage = current.filter(
+            (event) => !firstPageIds.has(event.id)
+          );
+          return [...mapped, ...previouslyLoadedBeyondFirstPage];
+        });
+        if (!loadedInitialPageRef.current) {
+          setHasMore(Boolean(page.hasMore));
+          loadedInitialPageRef.current = true;
+        }
         setError(null);
       } catch (err: unknown) {
         if (!mounted) return;
@@ -140,6 +153,38 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
       clearInterval(interval);
     };
   }, []);
+
+  const handleLoadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const offset = events.length;
+      const res = await fetch(
+        `${EVENTS_URL}?limit=${PAGE_SIZE}&offset=${offset}`
+      );
+      if (!res.ok) throw new Error("Error al cargar más alarmas");
+      const page = await res.json();
+      const data = Array.isArray(page) ? page : page.items;
+      const mapped: AlarmEvent[] = data.map((e: any) => ({
+        id: e.id_evento_alarma ?? e.id ?? e.idEvento ?? Number(new Date()) + Math.random(),
+        variable: (e.nombre_variable ?? e.variable ?? "").toLowerCase(),
+        deviceLabel: e.nombre_dispositivo ?? (e.id_dispositivo ? `Dispositivo #${e.id_dispositivo}` : "Dispositivo"),
+        value: Number(e.valor ?? 0),
+        severity: Number(e.nivel_severidad ?? 1),
+        firedAt: e.fecha_disparo ?? e.fecha ?? "",
+      }));
+      setEvents((current) => {
+        const knownIds = new Set(current.map((event) => event.id));
+        return [...current, ...mapped.filter((event) => !knownIds.has(event.id))];
+      });
+      setHasMore(Boolean(page.hasMore));
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error al cargar más alarmas");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const handleResolve = async (id: number) => {
     setResolvingId(id);
@@ -231,7 +276,7 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Alarmas activas</h2>
         <span className="text-xs text-gray-500">
-          {loading ? "Cargando..." : `${events.length} activas`}
+          {loading ? "Cargando..." : `${events.length}${hasMore ? "+" : ""} activas`}
         </span>
       </div>
 
@@ -260,7 +305,7 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
                   aria-label="Seleccionar todas las alarmas activas"
                   className="h-4 w-4 shrink-0 accent-[#0982A0]"
                 />
-                <span>Seleccionar todas</span>
+                <span>Seleccionar todas las visibles</span>
               </label>
 
               {selectedIds.length > 0 && (
@@ -342,6 +387,16 @@ const ActiveAlarmsWidget: React.FC<ActiveAlarmsWidgetProps> = ({
               );
             })}
           </div>
+          {hasMore && (
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={loadingMore || resolvingSelected || resolvingId !== null}
+              className="mt-3 min-h-10 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loadingMore ? "Cargando más alarmas..." : "Cargar 50 alarmas más"}
+            </button>
+          )}
         </>
       )}
     </div>
