@@ -2,6 +2,10 @@
 
 Interfaz web React + TypeScript para consultar las mediciones y alarmas del sistema de monitoreo ambiental del Tecnológico de La Laguna.
 
+## Aplicación
+
+[Abrir Monitor Ambiental](https://monitor-ambiental-front.onrender.com)
+
 ## Vistas
 
 - **Panel:** indicadores, gráfica reciente, últimas mediciones y alarmas activas. Actualiza las mediciones de la última hora cada cinco segundos.
